@@ -1,10 +1,12 @@
-from airflow.models import DAG, DagRun, TaskInstance, Log, XCom, SlaMiss, DagModel, Variable
-from airflow.jobs import BaseJob
-from airflow.models import settings
-from airflow.operators import PythonOperator
-from datetime import datetime, timedelta
+
 import os
 import logging
+from datetime import datetime, timedelta, timezone
+from airflow.operators.python_operator import PythonOperator
+
+from airflow.jobs import BaseJob
+from airflow.models import settings
+from airflow.models import DAG, DagRun, TaskInstance, Log, XCom, SlaMiss, DagModel, Variable
 
 """
 A maintenance workflow that you can deploy into Airflow to periodically clean out the DagRun, TaskInstance, Log, XCom, Job DB and SlaMiss entries to avoid having too much data in your Airflow MetaStore.
@@ -15,15 +17,29 @@ airflow trigger_dag --conf '{"maxDBEntryAgeInDays":30}' airflow-db-cleanup
     maxDBEntryAgeInDays:<INT> - Optional
 
 """
+# airflow-db-cleanup
+DAG_ID = os.path.basename(__file__).replace(".pyc", "").replace(".py", "")
 
-DAG_ID = os.path.basename(__file__).replace(".pyc", "").replace(".py", "")  # airflow-db-cleanup
-START_DATE = datetime.now() - timedelta(minutes=1)
-SCHEDULE_INTERVAL = "@daily"            # How often to Run. @daily - Once a day at Midnight (UTC)
-DAG_OWNER_NAME = "operations"           # Who is listed as the owner of this DAG in the Airflow Web Server
-ALERT_EMAIL_ADDRESSES = []              # List of email address to send email alerts to if this job fails
-DEFAULT_MAX_DB_ENTRY_AGE_IN_DAYS = Variable.get("max_db_entry_age_in_days", 30) # Length to retain the log files if not already provided in the conf. If this is set to 30, the job will remove those files that are 30 days old or older.
-ENABLE_DELETE = True                    # Whether the job should delete the db entries or not. Included if you want to temporarily avoid deleting the db entries.
-DATABASE_OBJECTS = [                    # List of all the objects that will be deleted. Comment out the DB objects you want to skip.
+#START_DATE = datetime.now() - timedelta(minutes=1)
+START_DATE = datetime(2018, 11, 28, 11, 30)
+
+# How often to Run. @daily - Once a day at Midnight (UTC)
+SCHEDULE_INTERVAL = "*/5 * * * *"
+
+# Who is listed as the owner of this DAG in the Airflow Web Server
+DAG_OWNER_NAME = "operations"
+
+# List of email address to send email alerts to if this job fails
+ALERT_EMAIL_ADDRESSES = []
+
+# Length to retain the log files if not already provided in the conf. If this is set to 30, the job will remove those files that are 30 days old or older.
+DEFAULT_MAX_DB_ENTRY_AGE_IN_DAYS = Variable.get("max_db_entry_age_in_days", 1)
+
+# Whether the job should delete the db entries or not. Included if you want to temporarily avoid deleting the db entries.
+ENABLE_DELETE = True
+
+# List of all the objects that will be deleted. Comment out the DB objects you want to skip.
+DATABASE_OBJECTS = [
     {"airflow_db_model": DagRun, "age_check_column": DagRun.execution_date},
     {"airflow_db_model": TaskInstance, "age_check_column": TaskInstance.execution_date},
     {"airflow_db_model": Log, "age_check_column": Log.dttm},
@@ -59,7 +75,12 @@ def print_configuration_function(**context):
     if max_db_entry_age_in_days is None:
         logging.info("maxDBEntryAgeInDays conf variable isn't included. Using Default '" + str(DEFAULT_MAX_DB_ENTRY_AGE_IN_DAYS) + "'")
         max_db_entry_age_in_days = DEFAULT_MAX_DB_ENTRY_AGE_IN_DAYS
-    max_date = datetime.now() + timedelta(-max_db_entry_age_in_days)
+
+    # to make it non-naive datetime, timezone aware
+    # Error, ~/airflow/venv/lib/python3.5/site-packages/airflow/utils/sqlalchemy.py", line 156, raise ValueError('naive datetime is disallowed')
+    tzUTC = timezone(timedelta(hours=0))
+    max_date = datetime.now(tz=tzUTC) + timedelta(-max_db_entry_age_in_days)
+
     logging.info("Finished Loading Configurations")
     logging.info("")
 
